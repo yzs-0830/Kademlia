@@ -1,66 +1,80 @@
-import msgpackrpc, time
+import msgpackrpc
+import time
 
 def new_client(ip, port):
     return msgpackrpc.Client(msgpackrpc.Address(ip, port))
 
-# 建立節點
-client_1 = new_client("127.0.0.1", 20001)
-client_2 = new_client("127.0.0.1", 20002)
-client_3 = new_client("127.0.0.1", 20003)
-client_4 = new_client("127.0.0.1", 20004)
-client_5 = new_client("127.0.0.1", 20005)
-client_6 = new_client("127.0.0.1", 20006)
-client_7 = new_client("127.0.0.1", 20007)
-client_8 = new_client("127.0.0.1", 20008)
+# 節點列表
+ip = "127.0.0.1"
+ports = list(range(20001, 20017))  # 20001 ~ 20016
+clients = [new_client(ip, p) for p in ports]
 
 # 讓 20001 建立網路
-client_1.call("create")
-print("Network created on 20001")
+clients[0].call("create")
+print(f"Network created on {ports[0]}")
+time.sleep(1)
 
-# 讓其他節點加入
-client_2.call("join", client_1.call("ping"))
-print("Node 20002 joined")
+# 節點加入（簡單樹狀加入）
+join_plan = [
+    (1, 0), (2, 1), (3, 0), (4, 0),
+    (5, 4), (6, 0), (7, 4), (8, 0),
+    (9, 0), (10, 5), (11, 0), (12, 6),
+    (13, 0), (14, 7), (15, 0)
+]
 
-client_3.call("join", client_2.call("ping"))
-print("Node 20003 joined")
+for node_idx, via_idx in join_plan:
+    clients[node_idx].call("join", clients[via_idx].call("ping"))
+    print(f"Node {ports[node_idx]} joined via {ports[via_idx]}")
+    time.sleep(0.5)
+
+# 先抓每個 node_id，存起來避免型態問題
+node_ids = []
+
+for c, p in zip(clients, ports):
+    try:
+        ping_result = c.call("ping")
+
+        # 把 key decode 成 str
+        ping_result_strkey = {k.decode() if isinstance(k, bytes) else k:
+                              v for k, v in ping_result.items()}
+
+        # 取 node_id
+        nid = ping_result_strkey.get("node_id")
+        if isinstance(nid, bytes):
+            nid = nid.hex()
+        node_ids.append(nid)
+
+    except Exception as e:
+        print(f"ping error → {e}")
+        node_ids.append(None)
 
 
-client_4.call("join", client_1.call("ping"))
-print("Node 20004 joined")
 
-client_5.call("join", client_1.call("ping"))
-print("Node 20005 joined")
+# 定義 find_plan: (查找者 idx, 目標節點 idx)
+find_plan = [
+    (0, 2), (0, 5), (0, 15),
+    (3, 1), (3, 10), (3, 14),
+    (7, 0), (7, 6), (7, 13),
+    (10, 12), (10, 3), (10, 15)
+]
 
-client_6.call("join", client_5.call("ping"))
-print("Node 20006 joined")
+print("\n--- Executing find_node plan ---")
+for src_idx, target_idx in find_plan:
+    if node_ids[target_idx] is None:
+        print(f"Skipping find_node for target {ports[target_idx]} (no node_id)")
+        continue
+    try:
+        result = clients[src_idx].call("find_node", node_ids[target_idx])
+        print(f"Node {ports[src_idx]} searching for {ports[target_idx]} → {result}")
+    except Exception as e:
+        print(f"find_node error → {e}")
+    time.sleep(0.5)
 
-client_7.call("join", client_1.call("ping"))
-print("Node 20007 joined")
-
-client_8.call("join", client_5.call("ping"))
-print("Node 20008 joined")
-
-# 測試 find_node
-print(f"\nSearching for 20003 from node 20001...")
-result1 = client_1.call("find_node", "0abb48e18a649835e7c8ca37bde0782fb252b607")
-print("Find node result:", result1)
-
-print(f"\nSearching for 20001 from node 20003...")
-result2 = client_3.call("find_node", "bcc603d8b8fbea8dc2db809a1d1ea9546680b247")
-print("Find node result:", result2)
-
-print(f"\nSearching for 20003 from node 20008...")
-result3 = client_8.call("find_node", "0abb48e18a649835e7c8ca37bde0782fb252b607")
-print("Find node result:", result3)
-
-# 顯示每個節點的 kbucket 狀況
+# 顯示每個節點的 k-bucket 狀態
 print("\n--- K-BUCKET STATE ---")
-print("20001:", client_1.call("show_bucket"))
-print("20002:", client_2.call("show_bucket"))
-print("20003:", client_3.call("show_bucket"))
-print("20004:", client_4.call("show_bucket"))
-print("20005:", client_5.call("show_bucket"))
-print("20006:", client_6.call("show_bucket"))
-print("20007:", client_7.call("show_bucket"))
-print("20008:", client_8.call("show_bucket"))
-
+for c, p in zip(clients, ports):
+    try:
+        buckets = c.call("show_bucket")
+        print(f"{p}: {buckets}")
+    except Exception as e:
+        print(f"{p} → {e}")
