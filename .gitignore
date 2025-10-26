@@ -4,9 +4,7 @@ env/
 
 # Python cache
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+
 
 # VSCode settings (可選)
 .vscode/
