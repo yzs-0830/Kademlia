@@ -43,10 +43,17 @@ class KademliaNode:
                     closest_nodes = [closest_nodes]
 
                 for node in closest_nodes:
+                    node_ip = node.get("ip") or node.get(b"ip").decode()
+                    node_port = node.get("port") or node.get(b"port")
+                    node_nodeid = node.get("node_id") or node.get(b"node_id").decode()
+
+                    another_client = msgpackrpc.Client(msgpackrpc.Address(node_ip, node_port)) 
+                    another_client.call("add_node", {"ip": self.ip, "port": self.port, "node_id": self.node_id})
+                    another_client.close()
                     self.add_node({
-                        "ip": node.get("ip") or node.get(b"ip").decode(),
-                        "port": node.get("port") or node.get(b"port"),
-                        "node_id": node.get("node_id") or node.get(b"node_id").decode()
+                        "ip": node_ip,
+                        "port": node_port,
+                        "node_id": node_nodeid
                     })
             except Exception as e:
                 print(f"Failed to get nodes from contact: {e}")
