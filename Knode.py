@@ -36,7 +36,7 @@ class KademliaNode:
             self.add_node({"ip": contact_ip, "port": contact_port, "node_id": contact_node_id})
             
             # 從 contact 取得更多節點
-            '''try:
+            try:
                 closest_nodes = client.call("find_node", self.node_id)
                 # closest_nodes 可能是一個 dict 或 list，統一處理成 list
                 if isinstance(closest_nodes, dict):
@@ -61,7 +61,7 @@ class KademliaNode:
 
 
             except Exception as e:
-                print(f"Failed to get nodes from contact: {e}")'''
+                print(f"Failed to get nodes from contact: {e}")
             
             client.call("add_node", {"ip": self.ip, "port": self.port, "node_id": self.node_id})
             print(self.kbucket)
