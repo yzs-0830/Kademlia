@@ -22,32 +22,27 @@ print("\n=== Joining phase ===")
 for i in range(1, len(clients)):
     bootstrap_index = max(0, i - 2)  # 每個節點從前兩個之一加入
     try:
-        # join 時直接傳 bootstrap node 的地址，不自動 find(self)
-        bootstrap_info = clients[bootstrap_index].call("ping")
-        clients[i].call("join", bootstrap_info)
+        clients[i].call("join", clients[bootstrap_index].call("ping"))
         print(f"Node {ports[i]} joined via {ports[bootstrap_index]}")
     except Exception as e:
         print(f"Join failed for {ports[i]} → {e}")
-    time.sleep(1)  # join 間隔短一些
+    time.sleep(2)  # join 後停 2 秒
+
+time.sleep(20)
 
 # 多次 find_node 測試
 print("\n=== find_node tests ===")
 targets = [11103, 11108, 11114]
 for t in targets:
     key = sha1_of(ip, t)
-    for cport, client in zip(ports[:5], clients[:5]):
-        print(f"\n[{cport}] Searching for node {t} (key={key[:6]}...)")
-        result = None
-        for attempt in range(3):  # 重試三次
-            try:
-                result = client.call("find_node", key, timeout=5)
-                break
-            except Exception:
-                time.sleep(0.5)
-        if result:
+    for cport, client in zip(ports[:5], clients[:5]):  # 前五個節點各查一個目標
+        try:
+            print(f"\n[{cport}] Searching for node {t} (key={key[:6]}...)")
+            result = client.call("find_node", key)  # 不帶 timeout
             print("Result:", result)
-        else:
-            print(f"[{cport}] find_node error → Request timed out")
+        except Exception as e:
+            print(f"[{cport}] find_node error → {e}")
+        time.sleep(2)  # 查找後停 2 秒
 
 # 顯示所有 bucket 狀態
 print("\n=== K-BUCKET STATES ===")
@@ -57,4 +52,3 @@ for port, client in zip(ports, clients):
         print(f"{port}:", buckets)
     except Exception as e:
         print(f"{port} → {e}")
-

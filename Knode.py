@@ -72,16 +72,14 @@ class KademliaNode:
 
 
     def find_node(self, key):
-        print("finding:", key)
+        print(f"[{self.port}] finding: {key[:6]}...")
         distance = xor_distance(self.node_id, key)
         target_bucket = distance.bit_length() - 1
-        print(target_bucket)
 
         # 往上找有節點的 bucket
         while target_bucket >= 0 and (target_bucket not in self.kbucket or not self.kbucket[target_bucket]):
             target_bucket -= 1
 
-        print("final", target_bucket)
         if target_bucket < 0:
             return {
                 "ip": str(self.ip),
@@ -95,23 +93,21 @@ class KademliaNode:
             if xor_distance(node["node_id"], key) < xor_distance(clearest_node["node_id"], key):
                 clearest_node = node
 
-        #遞迴尋找
-        client = msgpackrpc.Client(msgpackrpc.Address(clearest_node["ip"], clearest_node["port"]))
+        # 遞迴尋找
         clearest_result = None
-
         try:
-            clearest_result = client.call("find_node", key)
+            client = msgpackrpc.Client(msgpackrpc.Address(clearest_node["ip"], clearest_node["port"]))
+            clearest_result = client.call("find_node", key)  # 不帶 timeout
         except Exception as e:
-            print(f"find_node RPC error with {clearest_node['ip']}:{clearest_node['port']} → {e}")
+            print(f"[{self.port}] find_node RPC error with {clearest_node['ip']}:{clearest_node['port']} → {e}")
         finally:
-            client.close()
-
-        # 比較距離時，先確認結果內容是否正確
+            if 'client' in locals():
+                client.close()
+            
         self_dist = xor_distance(self.node_id, key)
         clearest_dist = xor_distance(clearest_node["node_id"], key)
-
-        if isinstance(clearest_result, dict) and (b"node_id" in clearest_result or "node_id" in clearest_result):
-            node_id_key = b"node_id" if b"node_id" in clearest_result else "node_id"
+        if isinstance(clearest_result, dict) and ("node_id" in clearest_result or b"node_id" in clearest_result):
+            node_id_key = "node_id" if "node_id" in clearest_result else b"node_id"
             result_dist = xor_distance(clearest_result[node_id_key], key)
         else:
             result_dist = float('inf')
@@ -126,12 +122,12 @@ class KademliaNode:
                 "node_id": str(self.node_id)
             }
         elif clearest_dist <= result_dist:
-            print("clearest_node:", clearest_node)
             return clearest_node
         else:
-            print("clearest_result:", clearest_result)
-            self.add_node(clearest_result)
+            if isinstance(clearest_result, dict):
+                self.add_node(clearest_result)
             return clearest_result
+
 
 
 
