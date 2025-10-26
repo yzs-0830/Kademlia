@@ -90,13 +90,14 @@ class KademliaNode:
             if xor_distance(node["node_id"], key) < xor_distance(clearest_node["node_id"], key):
                 clearest_node = node
                 
-        client = msgpackrpc.Client(msgpackrpc.Address(clearest_node["ip"], clearest_node["port"]))
+        client = msgpackrpc.Client(msgpackrpc.Address(clearest_node["ip"], clearest_node["port"]), timeout=0.2)
         clearest_result = None
 
         try:
             clearest_result = client.call("find_node", key)
         except Exception as e:
             print(f"find_node RPC error with {clearest_node['ip']}:{clearest_node['port']} → {e}")
+            clearest_result = clearest_node
         finally:
             client.close()
 
