@@ -108,6 +108,13 @@ class KademliaNode:
         target_bucket = distance.bit_length() - 1
         print(target_bucket)
 
+        if key == self.node_id:
+            return {
+                "ip": str(self.ip),
+                "port": int(self.port),
+                "node_id": str(self.node_id)
+            }
+
         # 往上找有節點的 bucket
         while target_bucket >= 0 and (target_bucket not in self.kbucket or not self.kbucket[target_bucket]):
             target_bucket -= 1
@@ -139,13 +146,7 @@ class KademliaNode:
             self.fail_count[clearest_node["node_id"]] = 0
         except Exception as e:
             print(f"find_node RPC error with {clearest_node['ip']}:{clearest_node['port']} → {e}")
-            self.fail_count[clearest_node["node_id"]] = self.fail_count.get(clearest_node["node_id"], 0) + 1
             clearest_result = clearest_node
-
-            if self.fail_count[clearest_node["node_id"]] >= 5:
-                print(f"[{self.port}] Node {clearest_node['port']} failed 5 times, replacing...")
-                self.replace_dead_node(clearest_node)
-        
         finally:
             client.close()
 
@@ -159,7 +160,7 @@ class KademliaNode:
         else:
             result_dist = float('inf')
             if clearest_result is not None:
-                print(f"⚠️ Invalid response from node {clearest_node['ip']}:{clearest_node['port']} → {clearest_result}")
+                print(f"Invalid response from node {clearest_node['ip']}:{clearest_node['port']} → {clearest_result}")
 
         # 選擇最近的節點
         if self_dist <= clearest_dist and self_dist <= result_dist:
@@ -170,11 +171,19 @@ class KademliaNode:
             }
         elif clearest_dist <= result_dist:
             print("clearest_node:", clearest_node)
-            return clearest_node
+            return {
+                "ip": str(clearest_node["ip"]),
+                "port": int(clearest_node["port"]),
+                "node_id": str(clearest_node["node_id"])
+            }
         else:
             print("clearest_result:", clearest_result)
             self.add_node(clearest_result)
-            return clearest_result
+            return {
+                "ip": str(clearest_result["ip"]),
+                "port": int(clearest_result["port"]),
+                "node_id": str(clearest_result["node_id"])
+            }
 
 
 
