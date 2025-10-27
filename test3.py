@@ -21,13 +21,14 @@ print("Node 22222 joined")
 client_3.call("join", client_2.call("ping"))
 print("Node 33333 joined")
 
-time.sleep(10)
+
 
 # 測試 find_node
+time.sleep(5)
 print(f"\nSearching for 33333 from node 11111...")
 result1 = client_1.call("find_node", "376dd4c8375225a3d2197584de1b63831cb49d83")
 print("Find node result:", result1)
-
+time.sleep(2)
 print(f"\nSearching for 11111 from node 33333...")
 result2 = client_3.call("find_node", "62abd6d074a0b3b9e2b6e9d2b0e8eb5bb9cd7277")
 print("Find node result:", result2)

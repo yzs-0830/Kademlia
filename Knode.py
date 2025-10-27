@@ -19,9 +19,9 @@ class KademliaNode:
 
     def ping(self): #return self contact information
         return {
-            "ip": self.ip,
-            "port": self.port,
-            "node_id": self.node_id
+            "ip": str(self.ip),
+            "port": int(self.port),
+            "node_id": str(self.node_id)
         }
 
    
@@ -70,7 +70,7 @@ class KademliaNode:
             
             # 從 contact 取得更多節點
             try:
-                closest_nodes = client.call("find_node", self.node_id)
+                closest_nodes = client.call("send_closest", self.node_id)
                 # closest_nodes 可能是一個 dict 或 list，統一處理成 list
                 if isinstance(closest_nodes, dict):
                     closest_nodes = [closest_nodes]
@@ -102,104 +102,107 @@ class KademliaNode:
         self.auto_ping_check = True
 
 
-    def find_node(self, key):
+    def find_node(self, key, max_steps=3):
         print("finding:", key)
+
+        # 已知節點與已問過節點
+        results = [{
+            "ip": str(self.ip),
+            "port": int(self.port),
+            "node_id": str(self.node_id)
+        }]
+        visited = set()
+        steps = 0
+
+        def xor_key_distance(node):
+            return xor_distance(node["node_id"], key)
+
+        # 循環查找
+        while steps < max_steps:
+            # 找到最近且還沒問過的節點
+            closest_node = None
+            for node in sorted(results, key=xor_key_distance):
+                if node["node_id"] not in visited:
+                    closest_node = node
+                    break
+
+            if not closest_node:
+                break
+
+            visited.add(closest_node["node_id"])
+            steps += 1
+
+            # 呼叫 closest 的 send_closest（同節點直接用方法，不用 RPC）
+            if closest_node["node_id"] == str(self.node_id):
+                new_node = self.send_closest(key)
+            else:
+                # 這裡暫時假設跨節點還是用 RPC 或模擬返回
+                # new_node = rpc_call(closest_node, "send_closest", key)
+                continue  # 先簡化只用本節點測試
+
+            if not new_node:
+                break
+
+            node_id_key = b"node_id" if b"node_id" in new_node else "node_id"
+            ip_key = b"ip" if b"ip" in new_node else "ip"
+            port_key = b"port" if b"port" in new_node else "port"
+
+            closest_result = {
+                "node_id": new_node[node_id_key].decode() if isinstance(new_node[node_id_key], bytes) else new_node[node_id_key],
+                "ip": new_node[ip_key].decode() if isinstance(new_node[ip_key], bytes) else new_node[ip_key],
+                "port": new_node[port_key]
+            }
+
+            # 如果 closest 已在 visited，停止迴圈
+            if closest_result["node_id"] in visited:
+                break
+
+            results.append(closest_result)
+
+        # 排序並返回距離 key 最近的節點
+        results.sort(key=xor_key_distance)
+        print(results)
+        return results[0]
+
+
+
+
+    def send_closest(self, key):
         distance = xor_distance(self.node_id, key)
         target_bucket = distance.bit_length() - 1
-        print(target_bucket)
-
-        if key == self.node_id:
-            return {
-                "ip": str(self.ip),
-                "port": int(self.port),
-                "node_id": str(self.node_id)
-            }
 
         # 往上找有節點的 bucket
         while target_bucket >= 0 and (target_bucket not in self.kbucket or not self.kbucket[target_bucket]):
             target_bucket -= 1
 
-        print("final", target_bucket)
         if target_bucket < 0:
+            # 沒有其他節點，就回傳自己
             return {
                 "ip": str(self.ip),
                 "port": int(self.port),
                 "node_id": str(self.node_id)
             }
 
-        # find clearest node in bucket
-        clearest_node = None
+        # 找 bucket 中最接近 key 的節點
+        closest = None
         for node in self.kbucket[target_bucket]:
             if node.get("inactive", False):
                 continue
-            if clearest_node is None or xor_distance(node["node_id"], key) < xor_distance(clearest_node["node_id"], key):
-                clearest_node = node
-        
-        if clearest_node is None: # fallback 回自己
-            clearest_node = {
+            if closest is None or xor_distance(node["node_id"], key) < xor_distance(closest["node_id"], key):
+                closest = {
+                "ip": str(node["ip"]),
+                "port": int(node["port"]),
+                "node_id": str(node["node_id"])
+            }
+
+        if closest is None:
+            closest = {
                 "ip": str(self.ip),
                 "port": int(self.port),
                 "node_id": str(self.node_id)
             }
-                
-        client = msgpackrpc.Client(msgpackrpc.Address(clearest_node["ip"], clearest_node["port"]), timeout=0.2)
-        clearest_result = None
 
-        try:
-            clearest_result = client.call("find_node", key)
-            self.fail_count[clearest_node["node_id"]] = 0
-        except Exception as e:
-            print(f"find_node RPC error with {clearest_node['ip']}:{clearest_node['port']} → {e}")
-            if xor_distance(self.node_id, key) <= xor_distance(clearest_node["node_id"], key):
-                return {
-                    "ip": str(self.ip),
-                    "port": int(self.port),
-                    "node_id": str(self.node_id)
-                }
-            else:
-                return {
-                    "ip": str(clearest_node["ip"]),
-                    "port": int(clearest_node["port"]),
-                    "node_id": str(clearest_node["node_id"])
-                }
-        finally:
-            client.close()
-
-        # 比較距離時，先確認結果內容是否正確
-        self_dist = xor_distance(self.node_id, key)
-        clearest_dist = xor_distance(clearest_node["node_id"], key)
-
-        if isinstance(clearest_result, dict) and (b"node_id" in clearest_result or "node_id" in clearest_result):
-            node_id_key = b"node_id" if b"node_id" in clearest_result else "node_id"
-            result_dist = xor_distance(clearest_result[node_id_key], key)
-        else:
-            result_dist = float('inf')
-            if clearest_result is not None:
-                print(f"Invalid response from node {clearest_node['ip']}:{clearest_node['port']} → {clearest_result}")
-
-        # 選擇最近的節點
-        if self_dist <= clearest_dist and self_dist <= result_dist:
-            return {
-                "ip": str(self.ip),
-                "port": int(self.port),
-                "node_id": str(self.node_id)
-            }
-        elif clearest_dist <= result_dist:
-            print("clearest_node:", clearest_node)
-            return {
-                "ip": str(clearest_node["ip"]),
-                "port": int(clearest_node["port"]),
-                "node_id": str(clearest_node["node_id"])
-            }
-        else:
-            print("clearest_result:", clearest_result)
-            self.add_node(clearest_result)
-            return {
-                "ip": str(clearest_result["ip"]),
-                "port": int(clearest_result["port"]),
-                "node_id": str(clearest_result["node_id"])
-            }
-
+        return closest
 
 
     def kill(self): #kill the node
