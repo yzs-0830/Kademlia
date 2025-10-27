@@ -136,7 +136,11 @@ class KademliaNode:
                 clearest_node = node
         
         if clearest_node is None: # fallback 回自己
-            clearest_node = self
+            clearest_node = {
+                "ip": str(self.ip),
+                "port": int(self.port),
+                "node_id": str(self.node_id)
+            }
                 
         client = msgpackrpc.Client(msgpackrpc.Address(clearest_node["ip"], clearest_node["port"]), timeout=0.2)
         clearest_result = None
@@ -146,7 +150,18 @@ class KademliaNode:
             self.fail_count[clearest_node["node_id"]] = 0
         except Exception as e:
             print(f"find_node RPC error with {clearest_node['ip']}:{clearest_node['port']} → {e}")
-            clearest_result = clearest_node
+            if xor_distance(self.node_id, key) <= xor_distance(clearest_node["node_id"], key):
+                return {
+                    "ip": str(self.ip),
+                    "port": int(self.port),
+                    "node_id": str(self.node_id)
+                }
+            else:
+                return {
+                    "ip": str(clearest_node["ip"]),
+                    "port": int(clearest_node["port"]),
+                    "node_id": str(clearest_node["node_id"])
+                }
         finally:
             client.close()
 
