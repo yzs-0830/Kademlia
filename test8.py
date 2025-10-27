@@ -40,11 +40,12 @@ client_8.call("join", client_5.call("ping"))
 print("Node 20008 joined")
 
 # 等一下讓節點更新 k-bucket
-time.sleep(5)
+time.sleep(2)
 
 
 
 # 測試 find_node (5 次查詢，避免查詢 join 相鄰點)
+
 print(f"\nSearching for 20005 from node 20001...")
 result1 = client_1.call("find_node", "b343b0f2536a2c373a0992247c07d55415bb4261")
 print("Find node result:", result1)
@@ -64,6 +65,7 @@ print(f"\nSearching for 20003 from node 20004...")
 result4 = client_4.call("find_node", "0abb48e18a649835e7c8ca37bde0782fb252b607")
 print("Find node result:", result4)
 time.sleep(1)
+
 
 print(f"\nSearching for 20001 from node 20007...")
 result5 = client_7.call("find_node", "bcc603d8b8fbea8dc2db809a1d1ea9546680b247")

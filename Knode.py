@@ -102,10 +102,9 @@ class KademliaNode:
         self.auto_ping_check = True
 
 
-    def find_node(self, key, max_steps=3):
+    def find_node(self, key, max_steps=10):
         print("finding:", key)
 
-        # 已知節點與已問過節點
         results = [{
             "ip": str(self.ip),
             "port": int(self.port),
@@ -117,9 +116,7 @@ class KademliaNode:
         def xor_key_distance(node):
             return xor_distance(node["node_id"], key)
 
-        # 循環查找
         while steps < max_steps:
-            # 找到最近且還沒問過的節點
             closest_node = None
             for node in sorted(results, key=xor_key_distance):
                 if node["node_id"] not in visited:
@@ -132,37 +129,44 @@ class KademliaNode:
             visited.add(closest_node["node_id"])
             steps += 1
 
-            # 呼叫 closest 的 send_closest（同節點直接用方法，不用 RPC）
+            new_nodes = []
             if closest_node["node_id"] == str(self.node_id):
-                new_node = self.send_closest(key)
+                new_nodes = [self.send_closest(key)]
             else:
-                # 這裡暫時假設跨節點還是用 RPC 或模擬返回
-                # new_node = rpc_call(closest_node, "send_closest", key)
-                continue  # 先簡化只用本節點測試
+                try:
+                    client = msgpackrpc.Client(msgpackrpc.Address(closest_node["ip"], closest_node["port"]), timeout=0.5)
+                    response = client.call("send_closest", key)
+                    client.close()
+                    if response:
+                        # 統一 key 為 str
+                        new_node_strkey = { (k.decode() if isinstance(k, bytes) else k):
+                                            (v.decode() if isinstance(v, bytes) else v)
+                                            for k,v in response.items()}
+                        new_nodes = [new_node_strkey]
+                except Exception as e:
+                    print(f"RPC error with {closest_node['ip']}:{closest_node['port']} → {e}")
+                    continue
 
-            if not new_node:
+            for new_node in new_nodes:
+                if not new_node:
+                    continue
+
+                node_entry = {
+                    "node_id": new_node["node_id"],
+                    "ip": new_node["ip"],
+                    "port": new_node["port"]
+                }
+
+                if node_entry["node_id"] not in visited and node_entry not in results:
+                    results.append(node_entry)
+
+            if all(n["node_id"] in visited for n in new_nodes):
                 break
 
-            node_id_key = b"node_id" if b"node_id" in new_node else "node_id"
-            ip_key = b"ip" if b"ip" in new_node else "ip"
-            port_key = b"port" if b"port" in new_node else "port"
-
-            closest_result = {
-                "node_id": new_node[node_id_key].decode() if isinstance(new_node[node_id_key], bytes) else new_node[node_id_key],
-                "ip": new_node[ip_key].decode() if isinstance(new_node[ip_key], bytes) else new_node[ip_key],
-                "port": new_node[port_key]
-            }
-
-            # 如果 closest 已在 visited，停止迴圈
-            if closest_result["node_id"] in visited:
-                break
-
-            results.append(closest_result)
-
-        # 排序並返回距離 key 最近的節點
         results.sort(key=xor_key_distance)
-        print(results)
+        print("All visited results:", results)
         return results[0]
+
 
 
 
@@ -171,38 +175,38 @@ class KademliaNode:
         distance = xor_distance(self.node_id, key)
         target_bucket = distance.bit_length() - 1
 
-        # 往上找有節點的 bucket
-        while target_bucket >= 0 and (target_bucket not in self.kbucket or not self.kbucket[target_bucket]):
-            target_bucket -= 1
+        # 先嘗試 target bucket
+        buckets_to_check = [target_bucket]
 
-        if target_bucket < 0:
-            # 沒有其他節點，就回傳自己
-            return {
-                "ip": str(self.ip),
-                "port": int(self.port),
-                "node_id": str(self.node_id)
-            }
+        # 往上找
+        buckets_to_check.extend(range(target_bucket + 1, max(self.kbucket.keys(), default=target_bucket) + 1))
+        # 往下找
+        buckets_to_check.extend(range(target_bucket - 1, -1, -1))
 
-        # 找 bucket 中最接近 key 的節點
-        closest = None
-        for node in self.kbucket[target_bucket]:
-            if node.get("inactive", False):
+        for b in buckets_to_check:
+            if b not in self.kbucket:
                 continue
-            if closest is None or xor_distance(node["node_id"], key) < xor_distance(closest["node_id"], key):
-                closest = {
-                "ip": str(node["ip"]),
-                "port": int(node["port"]),
-                "node_id": str(node["node_id"])
-            }
+            # 過濾 inactive 與自己
+            candidates = [node for node in self.kbucket[b] 
+                        if not node.get("inactive", False) and node["node_id"] != self.node_id]
+            if candidates:
+                # 找最接近 key 的節點
+                closest = min(candidates, key=lambda node: xor_distance(node["node_id"], key))
+                print(closest)
+                return {
+                    "ip": str(closest["ip"]),
+                    "port": int(closest["port"]),
+                    "node_id": str(closest["node_id"])
+                }
 
-        if closest is None:
-            closest = {
+    # 如果沒有其他節點，就回傳 None（或你也可以回自己）
+        print("send:self")
+        return {
                 "ip": str(self.ip),
                 "port": int(self.port),
                 "node_id": str(self.node_id)
             }
 
-        return closest
 
 
     def kill(self): #kill the node
