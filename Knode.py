@@ -15,7 +15,7 @@ class KademliaNode:
         self.k = 1
         self.node_cache = []  # stack (LIFO)
         self.fail_count = {}  # node_id -> 連續失敗次數
-        self.start_auto_ping = False
+        self.auto_ping_check = False
 
     def ping(self): #return self contact information
         return {
@@ -99,7 +99,7 @@ class KademliaNode:
             client.close()
 
         self.start_auto_ping()
-        self.aurto_ping_start = True
+        self.auto_ping_check = True
 
 
     def find_node(self, key):
