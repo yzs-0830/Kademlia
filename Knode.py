@@ -105,6 +105,7 @@ class KademliaNode:
     def find_node(self, key, max_steps=10):
         print("finding:", key)
 
+        # 初始已知節點只有自己
         results = [{
             "ip": str(self.ip),
             "port": int(self.port),
@@ -117,52 +118,59 @@ class KademliaNode:
             return xor_distance(node["node_id"], key)
 
         while steps < max_steps:
-            closest_node = None
+            # 找出最近且還沒訪問的節點
+            to_query = []
             for node in sorted(results, key=xor_key_distance):
                 if node["node_id"] not in visited:
-                    closest_node = node
-                    break
+                    to_query.append(node)
+                    if len(to_query) >= 2:  # 一次問兩個
+                        break
 
-            if not closest_node:
+            if not to_query:
                 break
 
-            visited.add(closest_node["node_id"])
-            steps += 1
+            for closest_node in to_query:
+                visited.add(closest_node["node_id"])
+                steps += 1
 
-            new_nodes = []
-            if closest_node["node_id"] == str(self.node_id):
-                new_nodes = [self.send_closest(key)]
-            else:
-                try:
-                    client = msgpackrpc.Client(msgpackrpc.Address(closest_node["ip"], closest_node["port"]), timeout=0.5)
-                    response = client.call("send_closest", key)
-                    client.close()
-                    if response:
-                        # 統一 key 為 str
-                        new_node_strkey = { (k.decode() if isinstance(k, bytes) else k):
-                                            (v.decode() if isinstance(v, bytes) else v)
-                                            for k,v in response.items()}
-                        new_nodes = [new_node_strkey]
-                except Exception as e:
-                    print(f"RPC error with {closest_node['ip']}:{closest_node['port']} → {e}")
-                    continue
+                new_nodes = []
+                # 自己直接呼叫 send_closest
+                if closest_node["node_id"] == str(self.node_id):
+                    new_nodes = self.send_closest(key)
+                else:
+                    try:
+                        client = msgpackrpc.Client(msgpackrpc.Address(closest_node["ip"], closest_node["port"]), timeout=0.5)
+                        response = client.call("send_closest", key)
+                        client.close()
+                        if response:
+                            # 統一 key 為 str
+                            new_nodes = [
+                                { (k.decode() if isinstance(k, bytes) else k):
+                                (v.decode() if isinstance(v, bytes) else v)
+                                for k,v in node_dict.items() }
+                                for node_dict in response
+                            ]
+                    except Exception as e:
+                        print(f"RPC error with {closest_node['ip']}:{closest_node['port']} → {e}")
+                        continue
 
-            for new_node in new_nodes:
-                if not new_node:
-                    continue
+                # 將新的節點加入結果列表
+                for new_node in new_nodes:
+                    if not new_node:
+                        continue
+                    node_entry = {
+                        "node_id": new_node["node_id"],
+                        "ip": new_node["ip"],
+                        "port": new_node["port"]
+                    }
+                    if node_entry["node_id"] not in visited and node_entry not in results:
+                        results.append(node_entry)
 
-                node_entry = {
-                    "node_id": new_node["node_id"],
-                    "ip": new_node["ip"],
-                    "port": new_node["port"]
-                }
-
-                if node_entry["node_id"] not in visited and node_entry not in results:
-                    results.append(node_entry)
-
+            # 如果這輪新增節點都已經訪問過，停止迴圈
             if all(n["node_id"] in visited for n in new_nodes):
                 break
 
+        # 排序並返回距離 key 最近的節點
         results.sort(key=xor_key_distance)
         print("All visited results:", results)
         return results[0]
@@ -171,7 +179,11 @@ class KademliaNode:
 
 
 
-    def send_closest(self, key):
+
+    def send_closest(self, key, count=2):
+        """
+        回傳最接近 key 的最多 count 個節點（不包含自己、不包含 inactive 節點）
+        """
         distance = xor_distance(self.node_id, key)
         target_bucket = distance.bit_length() - 1
 
@@ -183,29 +195,37 @@ class KademliaNode:
         # 往下找
         buckets_to_check.extend(range(target_bucket - 1, -1, -1))
 
+        candidates = []
         for b in buckets_to_check:
             if b not in self.kbucket:
                 continue
             # 過濾 inactive 與自己
-            candidates = [node for node in self.kbucket[b] 
-                        if not node.get("inactive", False) and node["node_id"] != self.node_id]
-            if candidates:
-                # 找最接近 key 的節點
-                closest = min(candidates, key=lambda node: xor_distance(node["node_id"], key))
-                print(closest)
-                return {
-                    "ip": str(closest["ip"]),
-                    "port": int(closest["port"]),
-                    "node_id": str(closest["node_id"])
-                }
+            for node in self.kbucket[b]:
+                if not node.get("inactive", False) and node["node_id"] != self.node_id:
+                    candidates.append(node)
+            if len(candidates) >= count:
+                break
 
-    # 如果沒有其他節點，就回傳 None（或你也可以回自己）
-        print("send:self")
-        return {
+        if not candidates:
+            # 如果沒有其他節點，就回傳自己
+            return [{
                 "ip": str(self.ip),
                 "port": int(self.port),
                 "node_id": str(self.node_id)
-            }
+            }]
+
+        # 排序並取最接近的 count 個
+        candidates.sort(key=lambda n: xor_distance(n["node_id"], key))
+        result = []
+        for n in candidates[:count]:
+            result.append({
+                "ip": str(n["ip"]),
+                "port": int(n["port"]),
+                "node_id": str(n["node_id"])
+            })
+
+        return result
+
 
 
 
