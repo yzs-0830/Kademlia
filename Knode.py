@@ -70,7 +70,7 @@ class KademliaNode:
             
             # 從 contact 取得更多節點
             try:
-                closest_nodes = client.call("send_closest", self.node_id)
+                closest_nodes = client.call("find_node", self.node_id)
                 # closest_nodes 可能是一個 dict 或 list，統一處理成 list
                 if isinstance(closest_nodes, dict):
                     closest_nodes = [closest_nodes]

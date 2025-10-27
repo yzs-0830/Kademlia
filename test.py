@@ -145,7 +145,7 @@ if __name__ == "__main__":
     join_phase_all()
 
     print("等待 20 秒 (join→find)...")
-    time.sleep(20)
+    time.sleep(5)
     find_phase(FIND_PAIRS_PHASE1, "Phase1")
 
     '''print("等待 2 秒 (find→kill)...")
@@ -153,10 +153,10 @@ if __name__ == "__main__":
     killed = kill_phase(KILL_PLAN)
 
     print("等待 40 秒 (kill cooldown)...")
-    time.sleep(40)'''
+    time.sleep(40)
     find_phase(FIND_PAIRS_PHASE2, "Phase2")
 
-    '''time.sleep(2)
+    time.sleep(2)
 
     show_all_buckets()  # ← 最後再顯示一次完整狀態'''
     print("=== TEST PLAN END ===")
