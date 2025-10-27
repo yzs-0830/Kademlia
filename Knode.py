@@ -1,6 +1,8 @@
 import os
+import threading
 import hashlib
 import msgpackrpc
+import time
 from xor import xor_distance, select_bucket
 
 class KademliaNode:
@@ -11,6 +13,9 @@ class KademliaNode:
         self.kbucket = {}
         self.search_node = 2
         self.k = 1
+        self.node_cache = []  # stack (LIFO)
+        self.fail_count = {}  # node_id -> 連續失敗次數
+        self.start_auto_ping = False
 
     def ping(self): #return self contact information
         return {
@@ -22,6 +27,34 @@ class KademliaNode:
    
     def create(self): #creat network
         self.kbucket = {}
+
+    def start_auto_ping(self, interval=2):
+        """啟動背景自動 ping"""
+        def ping_all_nodes():
+            while True:
+                time.sleep(interval)
+                self.check_nodes()
+
+        t = threading.Thread(target=ping_all_nodes, daemon=True)
+        t.start()
+
+    def check_nodes(self):
+        """遍歷所有 bucket 的節點進行 ping 檢查"""
+        for bucket_index, nodes in self.kbucket.items():
+            for node in nodes[:]:  # 複製列表避免修改時出錯
+                if node.get("inactive", False):
+                    continue
+                client = msgpackrpc.Client(msgpackrpc.Address(node["ip"], node["port"]), timeout=0.5)
+                try:
+                    client.call("ping")
+                    self.fail_count[node["node_id"]] = 0
+                except Exception as e:
+                    self.fail_count[node["node_id"]] = self.fail_count.get(node["node_id"], 0) + 1
+                    print(f"[{self.port}] Ping failed for {node['port']} ({self.fail_count[node['node_id']]}/5)")
+                    if self.fail_count[node["node_id"]] >= 5:
+                        self.replace_dead_node(node)
+                finally:
+                    client.close()
 
 
     def join(self, contact): 
@@ -65,6 +98,9 @@ class KademliaNode:
         finally:
             client.close()
 
+        self.start_auto_ping()
+        self.aurto_ping_start = True
+
 
     def find_node(self, key):
         print("finding:", key)
@@ -84,20 +120,32 @@ class KademliaNode:
                 "node_id": str(self.node_id)
             }
 
-        # 只取 bucket 裡的第一個節點
-        clearest_node = self.kbucket[target_bucket][0]
+        # find clearest node in bucket
+        clearest_node = None
         for node in self.kbucket[target_bucket]:
-            if xor_distance(node["node_id"], key) < xor_distance(clearest_node["node_id"], key):
+            if node.get("inactive", False):
+                continue
+            if clearest_node is None or xor_distance(node["node_id"], key) < xor_distance(clearest_node["node_id"], key):
                 clearest_node = node
+        
+        if clearest_node is None: # fallback 回自己
+            clearest_node = self
                 
         client = msgpackrpc.Client(msgpackrpc.Address(clearest_node["ip"], clearest_node["port"]), timeout=0.2)
         clearest_result = None
 
         try:
             clearest_result = client.call("find_node", key)
+            self.fail_count[clearest_node["node_id"]] = 0
         except Exception as e:
             print(f"find_node RPC error with {clearest_node['ip']}:{clearest_node['port']} → {e}")
+            self.fail_count[clearest_node["node_id"]] = self.fail_count.get(clearest_node["node_id"], 0) + 1
             clearest_result = clearest_node
+
+            if self.fail_count[clearest_node["node_id"]] >= 5:
+                print(f"[{self.port}] Node {clearest_node['port']} failed 5 times, replacing...")
+                self.replace_dead_node(clearest_node)
+        
         finally:
             client.close()
 
@@ -130,11 +178,6 @@ class KademliaNode:
 
 
 
-
-        
-
-
-
     def kill(self): #kill the node
         os._exit(0)
 
@@ -145,9 +188,13 @@ class KademliaNode:
         node_info = {
             "ip": node_info.get("ip") or node_info.get(b"ip").decode(),
             "port": node_info.get("port") or node_info.get(b"port"),
-            "node_id": node_info.get("node_id") or node_info.get(b"node_id").decode()
+            "node_id": node_info.get("node_id") or node_info.get(b"node_id").decode(),
+            "inactive": False
         }
 
+        if node_info["node_id"] == self.node_id:
+            return
+    
         distance = xor_distance(self.node_id, node_info["node_id"])
         bucket_index = select_bucket(distance)
 
@@ -160,23 +207,14 @@ class KademliaNode:
         # 檢查 node 是否已存在
         for existing in existing_nodes:
             if existing["node_id"] == node_info["node_id"]:
+                existing["inactive"] = False
                 return  # 已存在，不加入
 
         # 總數限制 4
         total_nodes = sum(len(nodes) for nodes in self.kbucket.values())
         if total_nodes >= 4:
-            # 嘗試替換死節點
-            for idx, existing in enumerate(existing_nodes):
-                client = msgpackrpc.Client(msgpackrpc.Address(existing["ip"], existing["port"]))
-                try:
-                    client.call("ping")
-                except:
-                    existing_nodes[idx] = node_info
-                    client.close()
-                    return
-                finally:
-                    client.close()
-            return  # 無法替換，總數已滿
+            self.node_cache.append(node_info)
+            return  # 放入cache，總數已滿
 
         # bucket 未滿 -> 加入新節點
         if len(existing_nodes) < 4:
@@ -186,6 +224,20 @@ class KademliaNode:
 
     
     
+    def replace_dead_node(self, dead_node):
+        for bucket_index, nodes in self.kbucket.items():
+            for n in nodes:
+                if n["node_id"] == dead_node["node_id"]:
+                    if self.node_cache:
+                        new_node = self.node_cache.pop()
+                        print(f"[{self.port}] Replacing {dead_node['port']} with {new_node['port']} from cache")
+                        nodes.remove(n)
+                        nodes.append(new_node)
+                        self.fail_count[new_node["node_id"]] = 0
+                    else:
+                        print(f"[{self.port}] No cached nodes, marking {dead_node['port']} inactive")
+                        n["inactive"] = True
+                    return
 
 
 
