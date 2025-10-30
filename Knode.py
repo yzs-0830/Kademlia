@@ -60,9 +60,9 @@ class KademliaNode:
                     self.fail_count[node["node_id"]] = self.fail_count.get(node["node_id"], 0) + 1
                     if self.fail_count[node["node_id"]] >= self.remove_limit:
                         self.replace_dead_node(node)
-                        if sum(len(nodes) for nodes in self.kbucket.values()) < (self.total_k/2 + 1):
-                            new_node = self.find_node(node["node_id"])
-                            self.add_node(new_node)
+                        active_count = sum(1 for bucket in self.kbucket.values() for n in bucket if not n.get("inactive", False))
+                        if active_count < (self.total_k / 2 + 1):
+                            self.find_node(node["node_id"])
                 finally:
                     client.close()
 
@@ -188,15 +188,15 @@ class KademliaNode:
         # sort and find result
         if results:
             results.sort(key=xor_key_distance)
-            closest = results[0]
+            closest = {
+                "ip": results[0]["ip"],
+                "port": results[0]["port"],
+                "node_id": results[0]["node_id"]
+            }
             if closest["node_id"] != self.node_id:
                 self.add_node(closest)  # renew kbucket
             print(f"[Find] Final results ({len(results)} nodes with {msgcount} msg): {results[:5]} ...")
-            return {
-                "ip": closest["ip"],
-                "port": closest["port"],
-                "node_id": closest["node_id"]
-            }
+            return closest
 
         return None
 
