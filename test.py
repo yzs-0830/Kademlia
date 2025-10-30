@@ -17,6 +17,11 @@ FIND_PAIRS_PHASE1 = [
     (20005, 20006),
     (20007, 20002),
     (20009, 20014),
+    (20002, 20010),
+    (20004, 20013),
+    (20008, 20003),
+    (20012, 20005),
+    (20015, 20001),
 ]
 
 FIND_PAIRS_PHASE2 = [
@@ -25,6 +30,11 @@ FIND_PAIRS_PHASE2 = [
     (20004, 20012),
     (20005, 20013),
     (20006, 20014),
+    (20008, 20016),
+    (20009, 20003),
+    (20010, 20005),
+    (20012, 20007),
+    (20013, 20006),
 ]
 
 FIND_PAIRS_PHASE3 = [
@@ -36,6 +46,7 @@ FIND_PAIRS_PHASE3 = [
 ]
 
 KILL_PLAN = [20001, 20002]  # 先 kill 兩個節點
+FINAL_KILL = [20003, 20004, 20005, 20006, 20007, 20008, 20009, 20010, 20011, 20012, 20013, 20014, 20015, 20016]
 alive_ports = [p for p in PORTS if p not in KILL_PLAN]
 
 def client(port):
@@ -115,6 +126,26 @@ def kill_phase(kill_list):
     print("=== Kill Phase done ===")
     return killed
 
+def final_kill_phase(kill_list):
+    print("\n=== Final Kill Phase start ===")
+    killed = []
+    for idx, port in enumerate(kill_list):
+        if idx >= 14:
+            break
+        print(f"[Kill] attempt kill node {port}")
+        try:
+            c = client(port)
+            try:
+                c.call("kill")
+                print(f"  → kill RPC returned for {port}")
+            except Exception as e:
+                print(f"  → kill RPC error/timeout for {port}: {e}")
+        except Exception as e:
+            print(f"  !! Cannot reach node {port} → {e}")
+        killed.append(port)
+    print("=== Final Kill Phase done ===")
+    return killed
+
 def rejoin_phase(targets, alive_ports, bootstrap_port=20001):
     print("\n=== Re-Join Phase ===")
     for port in targets:
@@ -146,15 +177,15 @@ if __name__ == "__main__":
 
     print("等待 20 秒 (join→find)...")
     time.sleep(5)
-    find_phase(FIND_PAIRS_PHASE2, "Phase1")
+    find_phase(FIND_PAIRS_PHASE1, "Phase1")
 
     print("等待 2 秒 (find→kill)...")
     time.sleep(2)
     killed = kill_phase(KILL_PLAN)
 
-    print("等待 40 秒 (kill cooldown)...")
-    time.sleep(40)
-    find_phase(FIND_PAIRS_PHASE1, "Phase2")
+    print("等待 20 秒 (kill cooldown)...")
+    time.sleep(20)
+    find_phase(FIND_PAIRS_PHASE2, "Phase2")
 
-
+    final_killed = final_kill_phase(FINAL_KILL)
     print("=== TEST PLAN END ===")
