@@ -29,7 +29,7 @@ class KademliaNode:
         self.kbucket = {}
 
     def start_auto_ping(self, interval=2):
-        """啟動背景自動 ping"""
+        #啟動背景自動 ping
         def ping_all_nodes():
             while True:
                 time.sleep(interval)
@@ -50,11 +50,14 @@ class KademliaNode:
                     self.fail_count[node["node_id"]] = 0
                 except Exception as e:
                     self.fail_count[node["node_id"]] = self.fail_count.get(node["node_id"], 0) + 1
-                    print(f"[{self.port}] Ping failed for {node['port']} ({self.fail_count[node['node_id']]}/5)")
                     if self.fail_count[node["node_id"]] >= 5:
                         self.replace_dead_node(node)
+                        if sum(len(nodes) for nodes in self.kbucket.values()) < 3:
+                            new_node = self.find_node(node["node_id"])
+                            self.add_node(new_node)
                 finally:
                     client.close()
+        
 
 
     def join(self, contact): 
@@ -64,8 +67,6 @@ class KademliaNode:
         client = msgpackrpc.Client(msgpackrpc.Address(contact_ip, contact_port)) 
         
         try: 
-            pingcheck = client.call("ping") 
-            print(f"Joined network via {contact_ip}:{contact_port}, got response: {pingcheck}")
             self.add_node({"ip": contact_ip, "port": contact_port, "node_id": contact_node_id})
             
             # 從 contact 取得更多節點
@@ -88,22 +89,17 @@ class KademliaNode:
                         "port": node_port,
                         "node_id": node_nodeid
                     })
-            except Exception as e:
-                print(f"Failed to get nodes from contact: {e}")
-            
-            client.call("add_node", {"ip": self.ip, "port": self.port, "node_id": self.node_id})
-            print(self.kbucket)
-        except Exception as e:
-            print(f"Failed to connect to {contact_ip}:{contact_port}: {e}")
+            finally:
+                client.call("add_node", {"ip": self.ip, "port": self.port, "node_id": self.node_id})
         finally:
             client.close()
 
-        self.start_auto_ping()
-        self.auto_ping_check = True
+        if not self.auto_ping_check:
+            self.start_auto_ping()
+            self.auto_ping_check = True
 
 
     def find_node(self, key, max_steps=10):
-        print("finding:", key)
 
         # 初始已知節點只有自己
         results = [{
@@ -151,7 +147,6 @@ class KademliaNode:
                                 for node_dict in response
                             ]
                     except Exception as e:
-                        print(f"RPC error with {closest_node['ip']}:{closest_node['port']} → {e}")
                         continue
 
                 # 將新的節點加入結果列表
@@ -171,9 +166,13 @@ class KademliaNode:
                 break
 
         # 排序並返回距離 key 最近的節點
-        results.sort(key=xor_key_distance)
-        print("All visited results:", results)
-        return results[0]
+        if results:
+            results.sort(key=xor_key_distance)
+            closest = results[0]
+            #if closest["node_id"] != self.node_id:
+            #    self.add_node(closest)
+            return closest
+        return None
 
 
 
@@ -191,9 +190,8 @@ class KademliaNode:
         buckets_to_check = [target_bucket]
 
         # 往上找
-        buckets_to_check.extend(range(target_bucket + 1, max(self.kbucket.keys(), default=target_bucket) + 1))
-        # 往下找
-        buckets_to_check.extend(range(target_bucket - 1, -1, -1))
+        buckets_to_check = sorted(self.kbucket.keys(), key=lambda b: abs(b - target_bucket))
+
 
         candidates = []
         for b in buckets_to_check:
@@ -234,8 +232,6 @@ class KademliaNode:
 
 
     def add_node(self, node_info):
-        # 統一資料型態
-        print("adding:", node_info)
         node_info = {
             "ip": node_info.get("ip") or node_info.get(b"ip").decode(),
             "port": node_info.get("port") or node_info.get(b"port"),
@@ -265,7 +261,20 @@ class KademliaNode:
         total_nodes = sum(len(nodes) for nodes in self.kbucket.values())
         if total_nodes >= 4:
             self.node_cache.append(node_info)
-            return  # 放入cache，總數已滿
+
+            # 找出所有 inactive 節點
+            inactive_nodes = []
+            for _, nodes in self.kbucket.items():
+                for node in nodes:
+                    if node.get("inactive", False):
+                        inactive_nodes.append(node)
+
+            # 替換這些節點
+            for dead_node in inactive_nodes:
+                self.replace_dead_node(dead_node)
+
+            return  # 路由表已滿，暫存節點到 cache
+
 
         # bucket 未滿 -> 加入新節點
         if len(existing_nodes) < 4:
@@ -277,18 +286,22 @@ class KademliaNode:
     
     def replace_dead_node(self, dead_node):
         for bucket_index, nodes in self.kbucket.items():
+            to_remove = None
             for n in nodes:
                 if n["node_id"] == dead_node["node_id"]:
-                    if self.node_cache:
-                        new_node = self.node_cache.pop()
-                        print(f"[{self.port}] Replacing {dead_node['port']} with {new_node['port']} from cache")
-                        nodes.remove(n)
-                        nodes.append(new_node)
-                        self.fail_count[new_node["node_id"]] = 0
-                    else:
-                        print(f"[{self.port}] No cached nodes, marking {dead_node['port']} inactive")
-                        n["inactive"] = True
-                    return
+                    to_remove = n
+                    break
+
+            if to_remove:
+                if self.node_cache:
+                    new_node = self.node_cache.pop()
+                    nodes.remove(to_remove)
+                    new_node["inactive"] = False
+                    nodes.append(new_node)
+                    self.fail_count[new_node["node_id"]] = 0
+                else:
+                    to_remove["inactive"] = True
+        return
 
 
 

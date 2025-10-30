@@ -8,7 +8,7 @@ PORTS = list(range(20001, 20017))  # 20001..20016 (16 nodes)
 
 def parent_port(port):
     idx = port - 20000
-    parent_idx = idx // 2
+    parent_idx = idx - 1
     return 20000 + parent_idx if parent_idx >= 1 else None
 
 FIND_PAIRS_PHASE1 = [
@@ -20,11 +20,11 @@ FIND_PAIRS_PHASE1 = [
 ]
 
 FIND_PAIRS_PHASE2 = [
+    (20007, 20015),
     (20003, 20011),
     (20004, 20012),
     (20005, 20013),
     (20006, 20014),
-    (20007, 20015),
 ]
 
 FIND_PAIRS_PHASE3 = [
@@ -146,17 +146,15 @@ if __name__ == "__main__":
 
     print("等待 20 秒 (join→find)...")
     time.sleep(5)
-    find_phase(FIND_PAIRS_PHASE1, "Phase1")
+    find_phase(FIND_PAIRS_PHASE2, "Phase1")
 
-    '''print("等待 2 秒 (find→kill)...")
+    print("等待 2 秒 (find→kill)...")
     time.sleep(2)
     killed = kill_phase(KILL_PLAN)
 
     print("等待 40 秒 (kill cooldown)...")
     time.sleep(40)
-    find_phase(FIND_PAIRS_PHASE2, "Phase2")
+    find_phase(FIND_PAIRS_PHASE1, "Phase2")
 
-    time.sleep(2)
 
-    show_all_buckets()  # ← 最後再顯示一次完整狀態'''
     print("=== TEST PLAN END ===")
