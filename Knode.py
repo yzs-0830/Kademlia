@@ -13,16 +13,16 @@ class KademliaNode:
         self.node_id = node_id or hashlib.sha1(f"{ip}:{port}".encode()).hexdigest()
         self.kbucket = {}
         self.replacement_cache = {}
-        self.search_node_per_round = 2 #search per round (exponential)
-        self.search_round_max = 5 #maximum search round
+        self.search_node_per_round = 1 #search per round (exponential)
+        self.search_round_max = 10 #maximum search round
+        self.send_back_node = 3 #nodes per send_closet
         self.total_k = 4 #total size of kbucket
         self.k_value = 1 #size per bucket
         self.fail_count = {}  # fail count for kbucket
         self.auto_ping_check = False #True after started ping check
         self.remove_limit = 3 #timeout exceed this then remove
         self.check_interval = 2 #interval between background ping check
-        self.join_buffer = 15 #buffer for join process before background check
-        self.msg_count = 0
+        self.join_buffer = 10 #buffer for join process before background check
 
 
     def ping(self): #return self contact information
@@ -69,7 +69,7 @@ class KademliaNode:
                     client.close()
 
         active_count = sum(1 for bucket in self.kbucket.values() for n in bucket if not n.get("inactive", False))
-        if active_count <= (self.total_k):
+        if active_count < (self.total_k/2 + 1):
             random_key = format(random.getrandbits(160), '040x')
             self.find_node(random_key)
 
@@ -124,7 +124,6 @@ class KademliaNode:
         visited = set()
         known_nodes = {str(self.node_id)}
         rounds = 0
-        self.msg_count = 0
 
         def xor_key_distance(node):
             return xor_distance(node["node_id"], key)
@@ -132,8 +131,11 @@ class KademliaNode:
         while rounds < self.search_round_max:  # keep searching before limit
             rounds += 1
             to_query = []
-            per_round = self.search_node_per_round * (2 ** (rounds - 1))  # 2^rounds growth
 
+            if rounds <= 3:
+                per_round = self.search_node_per_round + 1
+            else:
+                per_round = self.search_node_per_round
             
             for node in sorted(results, key=xor_key_distance):
                 if node["node_id"] not in visited:
@@ -159,7 +161,6 @@ class KademliaNode:
                             msgpackrpc.Address(closest_node["ip"], closest_node["port"]),
                             timeout=0.5
                         )
-                        self.msg_count += 1
                         response = client.call("send_closest", key)
                         client.close()
                         if response:
@@ -220,7 +221,7 @@ class KademliaNode:
             while rounds < self.search_round_max:  # keep searching before limit
                 rounds += 1
                 to_query = []
-                per_round = self.search_node_per_round * (2 ** (rounds - 1))  # 2^rounds growth
+                per_round = self.search_node_per_round + 1
 
                 
                 for node in sorted(results, key=xor_key_distance):
@@ -289,27 +290,11 @@ class KademliaNode:
 
 
 
-    def send_closest(self, key): #send back search_node_per_round closest node
-        distance = xor_distance(self.node_id, key)
-        target_bucket = distance.bit_length() - 1
+    def send_closest(self, key):
+        all_nodes = [node for bucket in self.kbucket.values() for node in bucket]
 
-        # first try target bucket
-        buckets_to_check = [target_bucket]
-
-        # expand
-        buckets_to_check = sorted(self.kbucket.keys(), key=lambda b: abs(b - target_bucket))
-
-
-        candidates = []
-        for b in buckets_to_check:
-            if b not in self.kbucket:
-                continue
-            # filter inactive and self
-            for node in self.kbucket[b]:
-                if not node.get("inactive", False) and node["node_id"] != self.node_id:
-                    candidates.append(node)
-            if len(candidates) >= self.search_node_per_round:
-                break
+        # filter inactive and self
+        candidates = [n for n in all_nodes if not n.get("inactive", False) and n["node_id"] != self.node_id]
 
         if not candidates:
             return [{
@@ -318,17 +303,16 @@ class KademliaNode:
                 "node_id": str(self.node_id)
             }]
 
-        # sort and find result
+        # 按 XOR 距離排序，取前 search_node_per_round 個
         candidates.sort(key=lambda n: xor_distance(n["node_id"], key))
-        result = []
-        for n in candidates[:self.search_node_per_round]:
-            result.append({
-                "ip": str(n["ip"]),
-                "port": int(n["port"]),
-                "node_id": str(n["node_id"])
-            })
+        result = [{
+            "ip": str(n["ip"]),
+            "port": int(n["port"]),
+            "node_id": str(n["node_id"])
+        } for n in candidates[:self.send_back_node]]
 
         return result
+
 
 
 
@@ -463,6 +447,3 @@ class KademliaNode:
 
                     return
                 
-    def return_msg(self):
-        return self.msg_count
-        
