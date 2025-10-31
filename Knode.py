@@ -3,6 +3,7 @@ import threading
 import hashlib
 import msgpackrpc
 import time
+import random
 from xor import xor_distance, select_bucket
 
 class KademliaNode:
@@ -38,6 +39,7 @@ class KademliaNode:
 
     def start_auto_ping(self): #background ping check initiate
         def ping_all_nodes():
+            time.sleep(20)
             while True:
                 time.sleep(self.check_interval)
                 self.check_nodes()
@@ -60,11 +62,14 @@ class KademliaNode:
                     self.fail_count[node["node_id"]] = self.fail_count.get(node["node_id"], 0) + 1
                     if self.fail_count[node["node_id"]] >= self.remove_limit:
                         self.replace_dead_node(node)
-                        active_count = sum(1 for bucket in self.kbucket.values() for n in bucket if not n.get("inactive", False))
-                        if active_count < (self.total_k / 2 + 1):
-                            self.find_node(node["node_id"])
+                        break
                 finally:
                     client.close()
+
+        active_count = sum(1 for bucket in self.kbucket.values() for n in bucket if not n.get("inactive", False))
+        if active_count <= (self.total_k):
+            random_key = format(random.getrandbits(160), '040x')  # 轉成 40 位的十六進位字串
+            self.find_node(random_key)
 
         
 
@@ -80,7 +85,7 @@ class KademliaNode:
             
             # get another contact by find(self)
             try:
-                closest_nodes = client.call("find_node", self.node_id)
+                closest_nodes = self.join_find(self.node_id)
                 if isinstance(closest_nodes, dict):
                     closest_nodes = [closest_nodes]
 
@@ -195,11 +200,92 @@ class KademliaNode:
             }
             if closest["node_id"] != self.node_id:
                 self.add_node(closest)  # renew kbucket
-            print(f"[Find] Final results ({len(results)} nodes with {msgcount} msg): {results[:5]} ...")
             return closest
 
         return None
 
+
+
+    def join_find(self, key):  # find key
+            results = [n for bucket in self.kbucket.values() for n in bucket]
+            visited = set()
+            known_nodes = {str(self.node_id)}  # 用來避免重複加入
+            rounds = 0
+            msgcount = 0
+
+            def xor_key_distance(node):
+                return xor_distance(node["node_id"], key)
+
+            while rounds < self.search_round_max:  # keep searching before limit
+                rounds += 1
+                to_query = []
+                per_round = self.search_node_per_round * (2 ** (rounds - 1))  # 2^rounds growth
+
+                # 選出還沒問過的最近節點
+                for node in sorted(results, key=xor_key_distance):
+                    if node["node_id"] not in visited:
+                        to_query.append(node)
+                        if len(to_query) >= per_round:
+                            break
+
+                if not to_query:
+                    break
+
+                any_new = False  # 用來偵測這輪是否有新節點
+
+                # iterative search
+                for closest_node in to_query:
+                    visited.add(closest_node["node_id"])
+
+                    new_nodes = []
+                    if closest_node["node_id"] == str(self.node_id):
+                        new_nodes = self.send_closest(key)
+                    else:
+                        try:
+                            client = msgpackrpc.Client(
+                                msgpackrpc.Address(closest_node["ip"], closest_node["port"]),
+                                timeout=0.5
+                            )
+                            msgcount += 1
+                            response = client.call("send_closest", key)
+                            client.close()
+                            if response:
+                                new_nodes = [
+                                    {
+                                        (k.decode() if isinstance(k, bytes) else k):
+                                        (v.decode() if isinstance(v, bytes) else v)
+                                        for k, v in node_dict.items()
+                                    }
+                                    for node_dict in response
+                                ]
+                        except Exception:
+                            continue
+
+                    # adding result
+                    for new_node in new_nodes:
+                        if not new_node:
+                            continue
+                        node_entry = {
+                            "node_id": new_node["node_id"],
+                            "ip": new_node["ip"],
+                            "port": new_node["port"]
+                        }
+                        if node_entry["node_id"] not in known_nodes:
+                            results.append(node_entry)
+                            known_nodes.add(node_entry["node_id"])
+                            any_new = True
+
+                # 若本輪沒有新節點，代表收斂
+                if not any_new:
+                    break
+
+            # sort and find result
+            if results:
+                results.sort(key=xor_key_distance)
+                closest = results[:1]
+                return closest
+
+            return None
 
 
 
@@ -302,41 +388,81 @@ class KademliaNode:
 
 
     
-    def replace_dead_node(self, dead_node): #replace dead node with cache or turn inactivate
+    def replace_dead_node(self, dead_node):  # replace dead node with cache or turn inactive
         for bucket_index, bucket in self.kbucket.items():
             for n in bucket:
                 if n["node_id"] == dead_node["node_id"]:
                     # remove dead_node
                     bucket.remove(n)
 
-                    # try replacement_cache
                     replacement_added = False
                     cache_candidates = self.replacement_cache.get(bucket_index, [])
+                    notalive_cache = []
 
-                    # check cache
+                    # cache health check
+                    for candidate in cache_candidates[:]:
+                        try:
+                            client = msgpackrpc.Client(
+                                msgpackrpc.Address(candidate["ip"], candidate["port"]),
+                                timeout=0.1
+                            )
+                            pong = client.call("ping")
+                            client.close()
+                        except Exception:
+                            notalive_cache.append(candidate)
+
+                    # 移除未回應的節點
+                    self.replacement_cache[bucket_index] = [
+                        n for n in cache_candidates if n not in notalive_cache
+                    ]
+                    cache_candidates = self.replacement_cache[bucket_index]
+
+                    # 原 bucket 替換
                     for i in range(len(cache_candidates)-1, -1, -1):
                         candidate = cache_candidates[i]
                         candidate_bucket_index = select_bucket(xor_distance(self.node_id, candidate["node_id"]))
                         candidate_bucket = self.kbucket.get(candidate_bucket_index, [])
 
                         if len(candidate_bucket) < self.k_value:
-                            # empty bucket -> insert
                             candidate["inactive"] = False
                             candidate_bucket.append(candidate)
                             self.kbucket[candidate_bucket_index] = candidate_bucket
                             self.fail_count[candidate["node_id"]] = 0
-
-                            # pop after insert
                             cache_candidates.pop(i)
                             replacement_added = True
                             break
 
-                    # keep inactive node if no replacement exist
+                    # fallback: cross-bucket replacement
+                    if not replacement_added:
+                        for other_bucket_index, other_cache in self.replacement_cache.items():
+                            if other_bucket_index == bucket_index:
+                                continue
+
+                            other_candidates = [
+                                n for n in other_cache if n not in bucket and not n.get("inactive", False)
+                            ]
+                            for i in range(len(other_candidates)-1, -1, -1):
+                                candidate = other_candidates[i]
+                                candidate_bucket = self.kbucket.get(bucket_index, [])
+
+                                if len(candidate_bucket) < self.k_value:
+                                    candidate["inactive"] = False
+                                    candidate_bucket.append(candidate)
+                                    self.kbucket[bucket_index] = candidate_bucket
+                                    self.fail_count[candidate["node_id"]] = 0
+                                    self.replacement_cache[other_bucket_index].remove(candidate)
+                                    replacement_added = True
+                                    break
+                            if replacement_added:
+                                break
+
+                    # keep dead_node inactive if沒替換到
                     if not replacement_added:
                         dead_node["inactive"] = True
                         bucket.append(dead_node)
 
                     return
+
 
 
 

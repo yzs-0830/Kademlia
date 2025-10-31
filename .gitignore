@@ -4,7 +4,8 @@ env/
 
 # Python cache
 __pycache__/
-
+__pycache__/Knode.cpython-313.pyc
 
 # VSCode settings (可選)
 .vscode/
+
