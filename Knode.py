@@ -22,6 +22,7 @@ class KademliaNode:
         self.remove_limit = 3 #timeout exceed this then remove
         self.check_interval = 2 #interval between background ping check
         self.join_buffer = 15 #buffer for join process before background check
+        self.msg_count = 0
 
 
     def ping(self): #return self contact information
@@ -123,7 +124,7 @@ class KademliaNode:
         visited = set()
         known_nodes = {str(self.node_id)}
         rounds = 0
-        msgcount = 0
+        self.msg_count = 0
 
         def xor_key_distance(node):
             return xor_distance(node["node_id"], key)
@@ -158,7 +159,7 @@ class KademliaNode:
                             msgpackrpc.Address(closest_node["ip"], closest_node["port"]),
                             timeout=0.5
                         )
-                        msgcount += 1
+                        self.msg_count += 1
                         response = client.call("send_closest", key)
                         client.close()
                         if response:
@@ -212,7 +213,6 @@ class KademliaNode:
             visited = set()
             known_nodes = {str(self.node_id)}
             rounds = 0
-            msgcount = 0
 
             def xor_key_distance(node):
                 return xor_distance(node["node_id"], key)
@@ -247,7 +247,6 @@ class KademliaNode:
                                 msgpackrpc.Address(closest_node["ip"], closest_node["port"]),
                                 timeout=0.5
                             )
-                            msgcount += 1
                             response = client.call("send_closest", key)
                             client.close()
                             if response:
@@ -464,3 +463,6 @@ class KademliaNode:
 
                     return
                 
+    def return_msg(self):
+        return self.msg_count
+        
