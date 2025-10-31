@@ -14,13 +14,14 @@ class KademliaNode:
         self.kbucket = {}
         self.replacement_cache = {}
         self.search_node_per_round = 2 #search per round (exponential)
-        self.search_round_max = 4 #maximum search round
+        self.search_round_max = 5 #maximum search round
         self.total_k = 4 #total size of kbucket
         self.k_value = 1 #size per bucket
         self.fail_count = {}  # fail count for kbucket
         self.auto_ping_check = False #True after started ping check
         self.remove_limit = 3 #timeout exceed this then remove
         self.check_interval = 2 #interval between background ping check
+        self.join_buffer = 15 #buffer for join process before background check
 
 
     def ping(self): #return self contact information
@@ -39,7 +40,7 @@ class KademliaNode:
 
     def start_auto_ping(self): #background ping check initiate
         def ping_all_nodes():
-            time.sleep(20)
+            time.sleep(self.join_buffer)
             while True:
                 time.sleep(self.check_interval)
                 self.check_nodes()
@@ -68,7 +69,7 @@ class KademliaNode:
 
         active_count = sum(1 for bucket in self.kbucket.values() for n in bucket if not n.get("inactive", False))
         if active_count <= (self.total_k):
-            random_key = format(random.getrandbits(160), '040x')  # 轉成 40 位的十六進位字串
+            random_key = format(random.getrandbits(160), '040x')
             self.find_node(random_key)
 
         
@@ -120,7 +121,7 @@ class KademliaNode:
             "node_id": str(self.node_id)
         }]
         visited = set()
-        known_nodes = {str(self.node_id)}  # 用來避免重複加入
+        known_nodes = {str(self.node_id)}
         rounds = 0
         msgcount = 0
 
@@ -132,7 +133,7 @@ class KademliaNode:
             to_query = []
             per_round = self.search_node_per_round * (2 ** (rounds - 1))  # 2^rounds growth
 
-            # 選出還沒問過的最近節點
+            
             for node in sorted(results, key=xor_key_distance):
                 if node["node_id"] not in visited:
                     to_query.append(node)
@@ -142,7 +143,7 @@ class KademliaNode:
             if not to_query:
                 break
 
-            any_new = False  # 用來偵測這輪是否有新節點
+            any_new = False
 
             # iterative search
             for closest_node in to_query:
@@ -186,7 +187,7 @@ class KademliaNode:
                         known_nodes.add(node_entry["node_id"])
                         any_new = True
 
-            # 若本輪沒有新節點，代表收斂
+            # no new -> end
             if not any_new:
                 break
 
@@ -206,10 +207,10 @@ class KademliaNode:
 
 
 
-    def join_find(self, key):  # find key
-            results = [n for bucket in self.kbucket.values() for n in bucket]
+    def join_find(self, key):  # find self when join
+            results = [n for bucket in self.kbucket.values() for n in bucket] #remove self for join
             visited = set()
-            known_nodes = {str(self.node_id)}  # 用來避免重複加入
+            known_nodes = {str(self.node_id)}
             rounds = 0
             msgcount = 0
 
@@ -221,7 +222,7 @@ class KademliaNode:
                 to_query = []
                 per_round = self.search_node_per_round * (2 ** (rounds - 1))  # 2^rounds growth
 
-                # 選出還沒問過的最近節點
+                
                 for node in sorted(results, key=xor_key_distance):
                     if node["node_id"] not in visited:
                         to_query.append(node)
@@ -231,7 +232,7 @@ class KademliaNode:
                 if not to_query:
                     break
 
-                any_new = False  # 用來偵測這輪是否有新節點
+                any_new = False 
 
                 # iterative search
                 for closest_node in to_query:
@@ -275,7 +276,7 @@ class KademliaNode:
                             known_nodes.add(node_entry["node_id"])
                             any_new = True
 
-                # 若本輪沒有新節點，代表收斂
+                # no new -> end
                 if not any_new:
                     break
 
@@ -411,13 +412,13 @@ class KademliaNode:
                         except Exception:
                             notalive_cache.append(candidate)
 
-                    # 移除未回應的節點
+                    # remove inactive
                     self.replacement_cache[bucket_index] = [
                         n for n in cache_candidates if n not in notalive_cache
                     ]
                     cache_candidates = self.replacement_cache[bucket_index]
 
-                    # 原 bucket 替換
+                    # replace with same bucket
                     for i in range(len(cache_candidates)-1, -1, -1):
                         candidate = cache_candidates[i]
                         candidate_bucket_index = select_bucket(xor_distance(self.node_id, candidate["node_id"]))
@@ -456,24 +457,10 @@ class KademliaNode:
                             if replacement_added:
                                 break
 
-                    # keep dead_node inactive if沒替換到
+                    # keep dead_node inactive if no replacement
                     if not replacement_added:
                         dead_node["inactive"] = True
                         bucket.append(dead_node)
 
                     return
-
-
-
-
-
-
-    def show_bucket(self):
-        result = {}
-        # 先把 bucket 複製
-        for index, nodes in self.kbucket.items():
-            result[f"bucket {index}"] = nodes.copy()
-        # 加上 cache
-        for index, candidates in self.replacement_cache.items():
-            result[f"cache {index}"] = candidates.copy()
-        return result
+                

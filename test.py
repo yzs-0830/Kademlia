@@ -12,28 +12,41 @@ def parent_port(port):
     return 20000 + parent_idx if parent_idx >= 1 else None
 
 FIND_PAIRS_PHASE1 = [
-    (20001, 20007),
-    (20007, 20002),
-    (20009, 20014),
-    (20002, 20010),
-    (20004, 20013),
-    (20008, 20003),
-    (20015, 20001),
+    (20001, 20006),
+    (20002, 20009),
+    (20003, 20012),
+    (20004, 20015),
+    (20005, 20010),
+    (20006, 20013),
+    (20007, 20014),
+    (20008, 20011),
+    (20009, 20016),
+    (20010, 20001),
+    (20011, 20003),
+    (20012, 20005),
 ]
+
+
 
 
 FIND_PAIRS_PHASE2 = [
-    (20007, 20015),
+    (20001, 20008),
+    (20002, 20009),
+    (20003, 20010),
     (20004, 20012),
-    (20006, 20014),
-    (20008, 20016),
-    (20009, 20003),
-    (20012, 20007),
-    (20013, 20006),
+    (20005, 20013),
+    (20007, 20014),
+    (20008, 20015),
+    (20009, 20016),
+    (20010, 20001),
+    (20012, 20003),
+    (20013, 20005),
+    (20014, 20002),
 ]
 
-KILL_PLAN = [20005, 20010]  # 先 kill 兩個節點
-FINAL_KILL = [20001, 20002, 20003, 20004, 20006, 20007, 20008, 20009, 20011, 20012, 20013, 20014, 20015, 20016]
+
+KILL_PLAN = [20006, 20011]  # 先 kill 兩個節點
+FINAL_KILL = [20001, 20002, 20003, 20004, 20005, 20007, 20008, 20009, 20010, 20012, 20013, 20014, 20015, 20016]
 alive_ports = [p for p in PORTS if p not in KILL_PLAN]
 
 def client(port):
@@ -45,15 +58,7 @@ def node_id_of(port):
     except Exception:
         return None
 
-def show_all_buckets():
-    print("\n=== K-BUCKET STATES ===")
-    for port in PORTS:
-        try:
-            buckets = client(port).call("show_bucket")
-            print(f"{port}: {buckets}")
-        except Exception as e:
-            print(f"{port} → {e}")
-    print("=== END OF K-BUCKET STATES ===\n")
+
 
 def join_phase_all():
     print("=== Join Phase: binary-tree 加入 (20002..20016) ===")
@@ -73,6 +78,17 @@ def join_phase_all():
         time.sleep(2)
     print("=== Join Phase Done ===")
 
+def show_all_buckets():
+    print("\n=== K-BUCKET STATES ===")
+    for port in PORTS:
+        try:
+            buckets = client(port).call("show_bucket")
+            print(f"{port}: {buckets}")
+        except Exception as e:
+            print(f"{port} → {e}")
+    print("=== END OF K-BUCKET STATES ===\n")
+
+
 def find_phase(pairs, phase_name):
     print(f"\n=== Find Phase ({phase_name}) start: {len(pairs)} queries ===")
     for (src, dst) in pairs:
@@ -90,8 +106,8 @@ def find_phase(pairs, phase_name):
             print(f"  → find_node error from {src} → {e}")
         time.sleep(2)
     print(f"=== Find Phase ({phase_name}) done ===")
-    show_all_buckets()  # ← 每次 find 後顯示 bucket 狀態
-
+    #show_all_buckets()
+    
 def kill_phase(kill_list):
     print("\n=== Kill Phase start ===")
     killed = []
