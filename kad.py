@@ -10,7 +10,7 @@ def get_config(): #read ip, port and generate node_id
     ip = sys.argv[1]
     port = int(sys.argv[2])
     node_string = ip + str(port)
-    node_id = hashlib.sha1(node_string.encode('utf-8')).hexdigest()  # 40-digit SHA-1
+    node_id = hashlib.sha1(f"{ip}:{port}".encode()).hexdigest()
 
     return ip, port, node_id
 
